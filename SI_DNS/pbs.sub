@@ -1,0 +1,16 @@
+#!/bin/tcsh
+#PBS -N SI_SLOPE_DNS
+#PBS -l nodes=4:ppn=24
+#PBS -q thomas
+#PBS -V
+#PBS -m e
+#PBS -M jacob13@stanford.edu
+#PBS -e /data/thomas/jacob13/SI_1/PBSERR.err
+#PBS -o /data/thomas/jacob13/SI_1/PBSOUT.out
+#
+cd $PBS_O_WORKDIR
+
+#
+mpirun python3 ./2D_SI_DNS.py 5e-5 0.05 1
+
+mpirun python3 ./merge.py snapshots_5e-5_0.05
