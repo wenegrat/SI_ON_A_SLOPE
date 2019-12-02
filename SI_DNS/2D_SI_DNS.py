@@ -13,7 +13,13 @@ inputs:
     N2  - background buoyancy frequency, units of s^-2
     theta - slope angle 
     ndays - number of days to simulate
-
+    
+    optionally 4 additional parameters setting domain size
+    Lx  - Length of domain across-slope, units of m
+    Lz  - Length of domain in slope normal, units of m
+    nx  - Number of Fourier components in x direction
+    nz  - Number of Chebyshev components in z direction
+    
 To run, merge, and plot using 4 processes, for instance, you could use:
     $ mpiexec -n 4 python3 2D_SI_DNS.py 1e-5 0.05 10
     $ mpiexec -n 4 python3 merge.py snapshots
@@ -49,6 +55,7 @@ if len(sys.argv)>4:
     Lz = float(sys.argv[5])
     nx = int(sys.argv[6])
     nz = int(sys.argv[7])
+    V = float(sys.argv[8])
 else:
     nx = 1024
     nz = 256
@@ -57,7 +64,7 @@ else:
 logger.info('===========PARAMETERS============')
 logger.info(f'N = {N}, Theta = {tht}, Lx = {Lx}, Lz = {Lz}, Nx = {nx}, Nz = {nz}')
 
-    #%% 2D PROBLEM
+#%% 2D PROBLEM
 # Create basis and domain
 start_init_time = time.time()
 x_basis = de.Fourier('x', nx, interval=(0, Lx), dealias=3/2)
@@ -112,7 +119,7 @@ problem.substitutions['PV'] = "PV_vert-(dzc(vc))*(dxc(b))"
 problem.add_equation('dt(u) - f*v*cos(tht) + dx(p)-b*sin(tht) +V*dy(u) - D(u, uz)   = -NL(u,uz)+damp*u')
 problem.add_equation('dt(v) + f*u*cos(tht) -f*w*sin(tht) + dy(p) +V*dy(v)- D(v, vz)  = -NL(v,vz)+damp*v')
 problem.add_equation('dt(w) + dz(p) - b*cos(tht) -D(w, wz) + V*dy(w) +f*v*sin(tht) = -NL(w, wz) + damp*w')
-problem.add_equation('dt(b) + u*N**2*sin(tht) + w*N**2*cos(tht)+ V*dy(w)  - D(b,bz+N**2*cos(tht))   = -NL(b,bz)+damp*(b)')
+problem.add_equation('dt(b) + u*N**2*sin(tht) + w*N**2*cos(tht)+ V*dy(w)  - D(b,bz)   = -NL(b,bz)+damp*(b)')
 problem.add_equation('dx(u) + dy(v) + wz = 0')
 
 # define derivatives
@@ -169,7 +176,7 @@ solver.stop_wall_time = np.inf
 solver.stop_iteration = np.inf
 
 # Analysis
-snap = solver.evaluator.add_file_handler('snapshots', sim_dt=1800, max_writes=24*1000)
+snap = solver.evaluator.add_file_handler('snapshots', sim_dt=1800, max_writes=24*10000)
 
 
 # Basic fields
@@ -190,6 +197,8 @@ snap.add_task('havg(prime(u)*prime(b))', scales=1, name='HBFrotated')
 # snap.add_task('havg(prime(wc)*kap*dzc(dzc(b+bb)))', scales=1, name='VBFsg')
 snap.add_task('havg(prime(w)*prime(b)*cos(tht) + prime(u)*prime(b)*sin(tht))', scales=1, name='VBFr')
 snap.add_task('havg(prime(vc)*prime(wc))*havg(dxc(b))/f', scales=1, name='GSP')#assumes background buoyancy has no x-variations (ie N**2 only).
+snap.add_task('havg(prime(u)*prime(w))', scales=1, name='UPWP')
+
 snap.add_task('havg(prime(vc)*prime(wc))*havg(dzc(vc))', scales=1, name='VSPv')
 snap.add_task('havg(prime(uc)*prime(wc))*havg(dzc(uc))', scales=1, name='VSPu')
 snap.add_task('havg(prime(vc)*prime(uc))*havg(dxc(vc))', scales=1, name='LSPv')
@@ -212,9 +221,15 @@ snap.add_task('havg(dxc(b))', name='bxbar')
 #Spectral Tasks
 snap.add_task('vc', layout=domain.dist.layouts[1], scales=1, name ='vcs') # Save in horizontal wavenumber, vertical physical space
 snap.add_task('wc', layout=domain.dist.layouts[1], scales=1, name ='wcs')
+
+snap.add_task('v', layout=domain.dist.layouts[1], scales=1, name ='vs') # Save in horizontal wavenumber, vertical physical space
+snap.add_task('w', layout=domain.dist.layouts[1], scales=1, name ='ws')
+snap.add_task('u', layout=domain.dist.layouts[1], scales=1, name ='us') # Save in horizontal wavenumber, vertical physical space
 snap.add_task('b', layout=domain.dist.layouts[1], scales=1, name ='bs')
-snap.add_task('dxc(b)', layout=domain.dist.layouts[1], scales=1, name='bxs')
-snap.add_task('dzc(b)', layout=domain.dist.layouts[1], scales=1, name='bzs')
+
+snap.add_task('NL(u, uz)', layout=domain.dist.layouts[1], scales=1, name='NLu')
+snap.add_task('NL(v, vz)', layout=domain.dist.layouts[1], scales=1, name='NLv')
+snap.add_task('NL(w, wz)', layout=domain.dist.layouts[1], scales=1, name='NLw')
 
 # CFL
 CFL = flow_tools.CFL(solver, initial_dt=1e-4, cadence=10, safety=0.8,
@@ -239,7 +254,7 @@ try:
                 um = np.max(np.abs(utemp['g']))
                 logger.info('U Val: %f' % um)
                 if np.isnan(um):
-                    raise Exception('NaN encountered.')
+                    raise Exception('NaN encountered.') # This is here to catch model blow up
 except:
     logger.error('Exception raised, triggering end of main loop.')
     raise
